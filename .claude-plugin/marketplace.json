@@ -1,0 +1,34 @@
+{
+  "name": "8th-layer",
+  "owner": {
+    "name": "OneZero1.ai",
+    "email": "support@onezero1.ai"
+  },
+  "metadata": {
+    "description": "8th-Layer.ai — Layer 8 of the OSI model. The Semantic Knowledge Layer for agent fleets.",
+    "version": "0.1.0-dev"
+  },
+  "plugins": [
+    {
+      "name": "8th-layer",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/OneZero1ai/8th-layer.git",
+        "path": "connectors/claude-code",
+        "ref": "main"
+      },
+      "description": "Connect Claude Code to your 8th-Layer.ai tenant — agent-to-agent crosstalk, find_expert routing, knowledge-graph publishing as a byproduct of work.",
+      "version": "0.1.0-dev",
+      "author": {
+        "name": "OneZero1.ai",
+        "email": "support@onezero1.ai"
+      },
+      "homepage": "https://8th-layer.ai",
+      "repository": "https://github.com/OneZero1ai/8th-layer",
+      "license": "Apache-2.0",
+      "keywords": ["enterprise", "8th-layer", "agent-to-agent", "knowledge", "crosstalk"],
+      "category": "enterprise",
+      "tags": ["8th-layer", "enterprise", "agent-to-agent", "knowledge-graph"]
+    }
+  ]
+}
