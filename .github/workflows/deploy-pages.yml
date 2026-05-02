@@ -1,0 +1,58 @@
+name: Deploy marketplace catalog to Pages
+
+# Source of truth: .claude-plugin/marketplace.json (the path the
+# Claude Code git-clone install flow expects). This workflow rebuilds
+# a static site whose root contains marketplace.json + index.html and
+# publishes it to https://marketplace.8thlayer.onezero1.ai/.
+#
+# Customers install via either:
+#   /plugin marketplace add OneZero1ai/8th-layer-marketplace             (git-clone)
+#   /plugin marketplace add https://marketplace.8thlayer.onezero1.ai/marketplace.json  (HTTP)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".claude-plugin/marketplace.json"
+      - "marketplace.json"
+      - "index.html"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync marketplace catalog to site root
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp .claude-plugin/marketplace.json _site/marketplace.json
+          python3 -c "import json; json.load(open('_site/marketplace.json'))"
+          cp index.html _site/index.html
+          echo "marketplace.8thlayer.onezero1.ai" > _site/CNAME
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

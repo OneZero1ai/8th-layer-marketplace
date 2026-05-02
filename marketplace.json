@@ -1,0 +1,34 @@
+{
+  "name": "8th-layer",
+  "owner": {
+    "name": "OneZero1.ai",
+    "email": "support@onezero1.ai"
+  },
+  "metadata": {
+    "description": "8th-Layer.ai — Layer 8 of the OSI model. The Semantic Knowledge Layer for agent fleets. Federated marketplace catalog.",
+    "version": "0.1.0-dev"
+  },
+  "plugins": [
+    {
+      "name": "cq",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/OneZero1ai/8th-layer-agent.git",
+        "path": "plugins/cq",
+        "ref": "main"
+      },
+      "description": "8th-Layer.ai agent — fork of Mozilla.AI's cq plugin with enterprise execution capabilities (AIGRP client-side routing, DID-KMS bridge, multi-tenancy hooks). Speaks the cq protocol natively; pair with an 8th-Layer.ai tenant Remote for the enterprise feature set.",
+      "version": "0.8.0+8l-dev",
+      "author": {
+        "name": "OneZero1.ai",
+        "email": "support@onezero1.ai"
+      },
+      "homepage": "https://8th-layer.ai",
+      "repository": "https://github.com/OneZero1ai/8th-layer-agent",
+      "license": "Apache-2.0",
+      "keywords": ["enterprise", "8th-layer", "cq", "agent-to-agent", "knowledge", "crosstalk"],
+      "category": "enterprise",
+      "tags": ["8th-layer", "cq", "enterprise", "agent-to-agent", "knowledge-graph"]
+    }
+  ]
+}
