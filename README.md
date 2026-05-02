@@ -11,13 +11,13 @@ The catalog is published two ways. Either works; the HTTP path is recommended fo
 ```shell
 # Recommended — branded HTTPS URL, served from our AWS CloudFront
 /plugin marketplace add https://8thlayer.onezero1.ai/marketplace.json
-/plugin install cq@8th-layer
+/plugin install 8l-cq
 ```
 
 ```shell
 # Alternative — git-clone from this repo
 /plugin marketplace add OneZero1ai/8th-layer-marketplace
-/plugin install cq@8th-layer
+/plugin install 8l-cq
 ```
 
 The plugin source is the **8th-Layer.ai agent** at [`OneZero1ai/8th-layer-agent`](https://github.com/OneZero1ai/8th-layer-agent) — our fork of [Mozilla.AI's cq](https://github.com/mozilla-ai/cq) (Apache-2.0). The plugin retains cq's name (`cq`) for protocol clarity; the marketplace name (`8th-layer`) reflects our brand. Per the [fork delta](https://github.com/OneZero1ai/8th-layer-agent/blob/main/FORK_DELTA.md), the fork adds enterprise execution capabilities (AIGRP client-side routing, DID-KMS bridge, multi-tenancy hooks) but keeps cq's protocol, schema, and DID model unchanged.
@@ -36,7 +36,7 @@ Customer IT can centrally provision and lock the 8th-Layer.ai agent on all devel
     }
   },
   "enabledPlugins": {
-    "cq@8th-layer": true
+    "8l-cq@8th-layer": true
   },
   "strictKnownMarketplaces": [
     { "source": "github", "repo": "OneZero1ai/8th-layer-marketplace" }

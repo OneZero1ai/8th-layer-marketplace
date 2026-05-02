@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "cq",
+      "name": "8l-cq",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/OneZero1ai/8th-layer-agent.git",
