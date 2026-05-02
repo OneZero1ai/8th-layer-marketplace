@@ -6,7 +6,16 @@ This is the federated [Claude Code plugin marketplace](https://code.claude.com/d
 
 ## Install
 
+The catalog is published two ways. Either works; the HTTP path is recommended for branded distribution:
+
 ```shell
+# Recommended — branded HTTPS URL, served from our AWS CloudFront
+/plugin marketplace add https://8thlayer.onezero1.ai/marketplace.json
+/plugin install cq@8th-layer
+```
+
+```shell
+# Alternative — git-clone from this repo
 /plugin marketplace add OneZero1ai/8th-layer-marketplace
 /plugin install cq@8th-layer
 ```
