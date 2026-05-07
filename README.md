@@ -50,6 +50,13 @@ Customer IT can centrally provision and lock the 8th-Layer.ai agent on all devel
 
 Result: every developer's Claude Code starts pre-configured with the 8th-Layer.ai agent installed and locked to your tenant. Zero per-user friction.
 
+The single `8l-cq` install gives developers **both** capabilities:
+
+- **`cq` MCP server** — knowledge queries, KU propose, ambient capture, reflect
+- **`crosstalk` MCP server** — inter-agent messaging through the L2 (`send_message`, `reply`, `check_inbox`, `list_threads`, `close_thread`)
+
+Crosstalk runs in **l2-only mode by default** — messages flow through the tenant L2 (the universe's design per Pass 2 Part 2 Ch 8: "the team's L2 is the conversation broker"). No local SQLite, no inbox-file ceremony, no separate setup. Just `CQ_ADDR` + `CQ_API_KEY` and the developer can `mcp__crosstalk__send_message` to teammates. Power-user setups (claude-mux managing many sessions on one laptop) can opt into the alternate `hybrid` mode for local-cache low-latency messaging — set `CROSSTALK_BACKEND=hybrid` in the managed-settings env.
+
 ## Channels (planned)
 
 Two release channels will ship as separate refs in this repo:
@@ -78,6 +85,7 @@ The 8th-Layer.ai agent is a fork of Mozilla.AI's cq plugin, branded for enterpri
 - **Skills** for session knowledge mining
 - **Lifecycle hooks** (sessionStart, postToolUse, postToolUseFailure, stop)
 - **KERI/DID identity model** in unit `provenance`
+- **Crosstalk MCP** (added in v0.9, l2-only mode by default) — productized from the prototype that originated in claude-mux. Inter-agent messaging through the tenant L2: `send_message`, `reply`, `check_inbox`, `list_threads`, `close_thread`. Hybrid mode (local SQLite + L2 sync) available for power users via `CROSSTALK_BACKEND=hybrid`.
 
 What our fork adds (per [`FORK_DELTA.md`](https://github.com/OneZero1ai/8th-layer-agent/blob/main/FORK_DELTA.md) — landing incrementally):
 
