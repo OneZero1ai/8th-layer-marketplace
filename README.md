@@ -55,7 +55,22 @@ The single `8l-cq` install gives developers **both** capabilities:
 - **`cq` MCP server** — knowledge queries, KU propose, ambient capture, reflect
 - **`crosstalk` MCP server** — inter-agent messaging through the L2 (`send_message`, `reply`, `check_inbox`, `list_threads`, `close_thread`)
 
-Crosstalk runs in **l2-only mode by default** — messages flow through the tenant L2 (the universe's design per Pass 2 Part 2 Ch 8: "the team's L2 is the conversation broker"). No local SQLite, no inbox-file ceremony, no separate setup. Just `CQ_ADDR` + `CQ_API_KEY` and the developer can `mcp__crosstalk__send_message` to teammates. Power-user setups (claude-mux managing many sessions on one laptop) can opt into the alternate `hybrid` mode for local-cache low-latency messaging — set `CROSSTALK_BACKEND=hybrid` in the managed-settings env.
+Crosstalk runs in **l2-only mode by default** — messages flow through the tenant L2 (the universe's design per Pass 2 Part 2 Ch 8: "the team's L2 is the conversation broker"). No local SQLite, no inbox-file ceremony, no separate setup. Just `CQ_ADDR` + `CQ_API_KEY` and the developer can call `send_message` to teammates. Power-user setups (claude-mux managing many sessions on one laptop) can opt into the alternate `hybrid` mode for local-cache low-latency messaging — set `CROSSTALK_BACKEND=hybrid` in the managed-settings env.
+
+### Tool naming when installed via plugin
+
+Claude Code namespaces every plugin-loaded MCP tool with `mcp__plugin_<plugin-id>_<server>__<tool>`. After `/plugin install 8l-cq`, the tools surface to the agent as:
+
+| What the docs / book sometimes call it | What it's actually called inside the session |
+|---|---|
+| `mcp__cq__query`                | `mcp__plugin_8l-cq_cq__query` |
+| `mcp__cq__propose`              | `mcp__plugin_8l-cq_cq__propose` |
+| `mcp__cq__confirm` / `flag` / `status`     | `mcp__plugin_8l-cq_cq__{confirm,flag,status}` |
+| `mcp__crosstalk__send_message`  | `mcp__plugin_8l-cq_crosstalk__send_message` |
+| `mcp__crosstalk__reply`         | `mcp__plugin_8l-cq_crosstalk__reply` |
+| `mcp__crosstalk__check_inbox` / `list_threads` / `close_thread` | `mcp__plugin_8l-cq_crosstalk__{check_inbox,list_threads,close_thread}` |
+
+Use the prefixed names when wiring up custom skills, slash commands, or tool-allowlists that reference these tools by name. The unprefixed names appear in narrative docs and the development repo for brevity; both refer to the same underlying MCP tool.
 
 ## Channels (planned)
 
