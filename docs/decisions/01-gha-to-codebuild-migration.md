@@ -287,3 +287,128 @@ What is **specific to this repo**:
   - <https://docs.aws.amazon.com/codebuild/latest/userguide/build-spec-ref.html>
 
 Design closed 2026-05-08. Awaiting operator approval before any infra is created.
+
+---
+
+## Addendum 2026-05-09 — operator decision: separate bucket
+
+The body of this doc recommended bucket co-residency on `8l-web-site-us-east-1-124074140789` with `--exclude "marketplace*.json"` mitigations on the marketing-website CodeBuild project (open question #1). After review, the operator chose **option 3 — physical isolation in a dedicated S3 bucket** instead. Reason: physical isolation is permanent; exclude rules are forgotten. A future contributor patching the marketing-website buildspec for an unrelated reason can drop the exclude line in a refactor and silently nuke the catalog on the next deploy. Removing the bucket from the blast radius removes the failure mode entirely. Most invasive of the three options, cleanest long-term.
+
+Two related decisions were also locked alongside this one and are reflected below:
+
+- **S3 versioning** is now enabled on the original shared bucket `8l-web-site-us-east-1-124074140789` (already done by the parent session). Open question #2 is closed.
+- **Strands canary probes will be wired up before the cutover** (option 1 from open question #4 — wire the probe path before Week 0, accept the time cost over lower-confidence manual validation).
+
+The rest of this doc — IAM Pattern B, CodeBuild project shape, validation, rollback artifact-trail mechanic — stands as written. The deltas below replace the bucket/URL/sequence specifics.
+
+### New bucket spec
+
+Following the existing convention `8l-web-site-us-east-1-124074140789` (= `<purpose>-<region>-<account>`):
+
+- **Name**: `8l-marketplace-us-east-1-124074140789`
+- **Region**: `us-east-1` (same account, `8th-layer-app` profile, `124074140789`)
+- **Versioning**: enabled at creation (CFN `VersioningConfiguration: { Status: Enabled }`). The rollback story still leans on it; cost is trivial for ~1.3KB JSON files.
+- **Default encryption**: AES256 (SSE-S3). KMS is over-engineered for a public-read CDN origin where the asset is, by design, world-readable via CloudFront.
+- **Public access**: fully blocked (`BlockPublicAcls + IgnorePublicAcls + BlockPublicPolicy + RestrictPublicBuckets` all `true`). Public read goes through CloudFront via **Origin Access Control (OAC)** — bucket policy grants `s3:GetObject` only to the marketplace CloudFront distribution's service principal scoped by `aws:SourceArn`. Same shape AWS recommends for any modern static site origin; OAI is legacy.
+- **Lifecycle**: noncurrent-version expiration at 365 days. Plenty for rollback; keeps versioning costs trivially bounded.
+- **Object key**: `marketplace.json` at the bucket root (canary key remains `marketplace-canary.json` during Week 0, on the *new* bucket).
+
+Migration of the existing `marketplace.json` content from the shared bucket is a one-time `aws s3 cp` (1.3KB; manual; doc-as-runbook step).
+
+### CloudFront topology
+
+**Recommendation: dedicated CloudFront distribution with its own DNS hostname `marketplace.8th-layer.ai`** (DNS managed in Route 53 in the `8th-layer-app` account; ACM cert in `us-east-1` for CloudFront).
+
+- **Why dedicated, not a new behavior on the apex distro `EEUW0F2ICYKFQ`:**
+  - **Cache independence.** The marketplace's `cache-control: public, max-age=300` is intentional (5-minute TTL for fast catalog publishing). The marketing-website may want hour/day TTLs. Coupling them via one distro means cache-policy changes for one require regression-thinking about the other. Independent distros decouple that.
+  - **Invalidation independence.** The narrowly-scoped IAM perm `cloudfront:CreateInvalidation` on `marketplace*.json` paths becomes `cloudfront:CreateInvalidation` on the *whole* dedicated distro — simpler ARN scoping, no path-prefix accidents. Marketing-website invalidations can never accidentally affect the catalog.
+  - **Branding signal.** The hostname `marketplace.8th-layer.ai` is self-documenting in URL form: when an operator pastes `/plugin marketplace add https://marketplace.8th-layer.ai/marketplace.json` into a session, it's unambiguous. With the apex hostname, `8thlayer.onezero1.ai/marketplace.json` could be mistaken for a transient marketing route.
+  - **Failure isolation.** A misconfigured marketing-website behavior (cache key, headers, OAC policy) cannot break catalog fetch. The fleet-impact framing in this doc demands this isolation.
+  - **Cost.** Negligible — CloudFront has no per-distro fixed fee; price is per-request and per-GB-egress, and a 1.3KB JSON polled by the fleet is a rounding error against marketing-website traffic.
+
+- **Apex-reuse alternative (rejected for V1).** Add an origin pointing at the new bucket and a path-pattern behavior `/marketplace*.json` on the existing distro. Fewer moving parts, but inherits all the coupling concerns above. Acceptable as a fallback if Route53/ACM provisioning for `marketplace.8th-layer.ai` blocks the Week-0 schedule; revisit at the dedicated-distro design step.
+
+- **Distribution settings (sketch):**
+  - Origin: the new S3 bucket via OAC (not website-endpoint mode).
+  - Default behavior: `GET, HEAD` only; viewer protocol policy = redirect HTTP → HTTPS; compression on.
+  - Cache policy: AWS-managed `CachingOptimized` overridden by origin `Cache-Control: public, max-age=300` for `marketplace.json`; `marketplace-canary.json` gets `max-age=60` (faster canary-feedback loop during Week 0).
+  - Response-headers policy: `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'` (the asset is inert JSON, no embedding context).
+  - Logging: standard CloudFront access logs to a sibling S3 bucket (or reuse the marketing-website's logs bucket if one exists; out of scope to decide here).
+
+### URL migration
+
+Current canonical URL (in `README.md` and likely cached in fleet sessions): `https://8thlayer.onezero1.ai/marketplace.json`. New canonical URL post-cutover: `https://marketplace.8th-layer.ai/marketplace.json`.
+
+The plugin install URL is referenced in this repo's `README.md` (the operator-facing onboarding command). It is also cached in the runtime state of every Claude Code session that previously ran `/plugin marketplace add https://8thlayer.onezero1.ai/marketplace.json` — Claude Code persists added marketplace URLs in user-local config until the user explicitly re-runs `/plugin marketplace remove` and re-adds the new one. We cannot force every fleet developer to re-add; some sessions will keep hitting the old URL for months.
+
+**Migration plan:**
+
+1. **Day 0 (Week 1 cutover)**: new URL (`marketplace.8th-layer.ai/marketplace.json`) becomes the documented install URL. README and `8l-cq` plugin manifest references updated in the same PR that flips CodeBuild's `TARGET_KEY` to `marketplace.json` on the new bucket.
+2. **Day 0 → Day 90**: the old URL `8thlayer.onezero1.ai/marketplace.json` serves a **301 Moved Permanently** redirect to the new URL. Implementation: a CloudFront Function (or small Lambda@Edge) on the *existing* apex distro `EEUW0F2ICYKFQ` matching path `/marketplace.json` exactly, returning `301` with `Location: https://marketplace.8th-layer.ai/marketplace.json`. This keeps cached fleet sessions working transparently.
+3. **Day 90+**: the old URL returns **410 Gone** with a small JSON body explaining the permanent move and instructing the user to run `/plugin marketplace remove 8th-layer && /plugin marketplace add https://marketplace.8th-layer.ai/marketplace.json`. The 90-day window is calibrated to "every reasonable user has either upgraded sessions or restarted Claude Code at least once" — long enough that a 410 is an unambiguous "your config is stale," short enough that the redirect mechanism doesn't ossify into permanent infrastructure.
+4. **Why 301 not 302**: Claude Code's `/plugin marketplace add` and the underlying HTTP fetch should treat the redirect as definitive and update internal state where it can. 302 invites repeated round-trips per session; 301 lets caches collapse the indirection. (If Claude Code's HTTP client doesn't follow 301 by default, the 410 phase becomes the forcing function — but that's a 90-day-out concern, not a Day-0 blocker.)
+5. **Why not just delete the old object on Day 0**: 404 to the fleet on a path the fleet expects = `/plugin install 8l-cq` breaks immediately for every cached session. The 90-day 301 buys grace; the 410 forces cleanup deliberately, with a message.
+
+Open question added below: where exactly does the 8l-cq plugin manifest reference the install URL (if at all)? Need to grep `OneZero1ai/8th-layer-agent/plugins/cq/` for hardcoded URLs and update them as part of the URL-migration PR.
+
+### Strands probes — what they verify
+
+The Strands probe fleet (8l-cq's existing infra) is the canary-confidence mechanism. The probes need to verify, against the canary URL `https://marketplace.8th-layer.ai/marketplace-canary.json` during Week 0 (and the production URL post-cutover):
+
+1. **HTTP 200 + valid JSON.** Cheapest probe: `GET <canary-url>`, assert `200`, assert response body parses as JSON. Runs every minute. Catches: bucket-policy/OAC misconfiguration, CloudFront origin failure, truncated upload, malformed JSON from a bad CodeBuild build.
+2. **Schema validation.** Parsed JSON has `name`, `owner`, `metadata`, `plugins` (non-empty list); every plugin entry has `name`, `source`, `version`. The probe carries a small JSON-schema or hand-rolled assertion (the catalog schema is small enough not to need a full schema lib). Runs every 5 minutes (rate-limited; the plugin entries don't change every minute). Catches: a CodeBuild build that wrote *some* JSON but lost catalog structure (e.g. uploaded a stub, uploaded the wrong file, wrote a malformed array).
+3. **Plugin-source resolution.** For each plugin entry, perform an HTTP HEAD against `source.url` and a `git ls-remote` against `source.url` for `source.ref` (verifies the ref exists). Runs every 15 minutes. Catches: a `git-subdir` ref pointing at a deleted branch, a 404 on the source repo (private-by-mistake, deleted, etc.).
+4. **End-to-end install probe.** A sandboxed Claude Code session in the Strands fleet runs `/plugin marketplace add https://marketplace.8th-layer.ai/marketplace-canary.json` followed by `/plugin install 8l-cq`. Asserts the install completes without error and the plugin's tools are registered. Runs every hour (expensive — a real Claude Code session). Catches: anything the previous three miss — most importantly, regressions in Claude Code's own marketplace fetcher behavior against our content (CSP blocks, header parsing, edge-case JSON shapes that pass validation but break the client).
+
+The first three are HTTP-level checks runnable from any Strands probe agent; (4) requires a Claude Code execution sandbox in the probe fleet — confirm with the operator/Dirk that this exists before relying on it. If it doesn't, manual operator+Dirk validation from two laptops is the Week-0 substitute, with (4) wired as a follow-up before Week 1 cutover.
+
+The probes write their results into the `8l-cq` knowledge graph as a `marketplace-canary` domain — passing checks confirm the canary KU; failing checks flag it. This earns its keep: the probe history becomes the audit trail demonstrating "5 consecutive matches" for the byte-equivalence threshold without manual ETag-tracking by the operator.
+
+### Migration sequence (revised for separate bucket)
+
+- **Week 0 — set-up**:
+  - Create new bucket `8l-marketplace-us-east-1-124074140789` (versioning, OAC, AES256, public access blocked).
+  - Create new CloudFront distribution + ACM cert + Route53 record for `marketplace.8th-layer.ai`.
+  - Create marketplace CodeBuild project + Pattern B IAM roles, scoped to the *new* bucket and *new* distribution.
+  - Wire Strands canary probes against `https://marketplace.8th-layer.ai/marketplace-canary.json` (probes run from Day 0 of Week 0).
+  - One-time copy the current catalog from old bucket → new bucket as `marketplace.json` (the canonical key in the new bucket).
+- **Week 0 → Week 1 — dual-publish**:
+  - CodeBuild publishes to `marketplace-canary.json` on the new bucket. Production fleet still reads `marketplace.json` on the *old* bucket via the old URL.
+  - Manual `bash scripts/publish.sh` continues writing the old bucket's `marketplace.json` (the path the fleet currently uses) for every catalog edit.
+  - Probes run; we collect 5 consecutive byte-identical matches between manual-script output (old bucket) and CodeBuild output (new bucket canary key) across real catalog edits.
+- **Week 1 — cutover**:
+  - When probes are green and the byte-equivalence threshold is met: flip CodeBuild's `TARGET_KEY` from `marketplace-canary.json` to `marketplace.json` (writes go to the new bucket's canonical key).
+  - Update `README.md` and the 8l-cq plugin manifest to reference the new URL `https://marketplace.8th-layer.ai/marketplace.json`.
+  - Add the **301 redirect** on the old URL (`8thlayer.onezero1.ai/marketplace.json` → new URL) via CloudFront Function on the apex distro.
+  - Existing manual `scripts/publish.sh` is shelved for break-glass only (kept in repo, no longer routine).
+- **Week 2 — retire manual path**:
+  - Confirm probes have stayed green for one full week post-cutover under the new bucket as the canonical source.
+  - Retire `bash scripts/publish.sh` from the routine (still in repo for catastrophic rollback; documented as break-glass in the cutover runbook).
+  - Old URL continues serving 301 redirects.
+- **Day 90 — final transition**:
+  - Old URL flips from 301 to **410 Gone** with the explanatory body.
+  - Old bucket's `marketplace.json` object can be deleted (S3 versioning still preserves history if needed).
+  - The CloudFront Function on the apex distro for `/marketplace.json` updates to return 410 instead of 301.
+
+### Estimate (revised)
+
+The bucket-move adds work the original estimate didn't account for: a new bucket + new distribution + new DNS + new ACM cert + URL migration with 301/410 logic + a CloudFront Function on the *apex* distro (which means coordinating with the marketing-website CloudFront's IaC). Strands probe wiring is also locked-in (was an "if/else" in the original).
+
+Touch-points added: new bucket CFN + new distribution CFN + ACM cert (us-east-1, automated DNS validation in Route53) + Route53 record + CloudFront Function source + CloudFront Function deploy on apex distro (cross-stack reference) + URL update PR on `8th-layer-agent` plugin manifest. **~7 additional touch-points, bringing total ~19.**
+
+- **Naive** (CFN module reusable, no DNS/cert surprises, plugin-manifest URL change clean): **4 dev-days** ≈ 1 calendar week with operator approval gates.
+- **Realistic** (×2 — ACM cert validation hits a Route53 NS-delegation snag, the CloudFront Function deploy on the apex distro requires coordination with the marketing-website's IaC owner, the plugin-manifest URL update needs a versioned 8l-cq release): **8 dev-days** ≈ 2 calendar weeks.
+- **Unknowns hit** (×3 — Claude Code's HTTP client behaves unexpectedly with 301 on `/plugin marketplace add` and forces an early move to 410 + user-facing comms; Strands probe-fleet end-to-end install probe (#4) doesn't yet exist and we have to build it; the new dedicated CloudFront distribution surfaces an OAC-vs-OAI quirk that requires a config redesign): **12 dev-days** ≈ 2.5–3 calendar weeks.
+
+**Net: budget 8 dev-days, expect 12.** Up from the original 6/9 by the bucket-move overhead. Don't promise <3 weeks externally on the cutover-to-410 timeline (the calendar is dominated by the 90-day redirect window, not the build work — but the build work itself is now ~2 weeks of focused effort).
+
+### New open questions (from this direction change)
+
+The original open questions #1, #2, and #4 are closed by the operator decisions captured above. New questions surfaced by the separate-bucket direction:
+
+1. **8l-cq plugin manifest URL location.** Where exactly does the plugin advertise the marketplace install URL — in `OneZero1ai/8th-layer-agent/plugins/cq/` somewhere, in the README, in a config? Need to identify and PR the URL update at Week 1 cutover. (Action: grep the agent repo for `8thlayer.onezero1.ai`.)
+2. **CloudFront Function on the apex distro — IaC ownership.** The 301-then-410 logic lives on `EEUW0F2ICYKFQ`, which is the marketing-website's distro. Whose IaC owns it after the marketing-website CodeBuild migration lands — this repo or `8th-layer-marketing-website`? Recommendation: define the function in `8th-layer-marketing-website`'s CFN (it owns the distro) but *source* it from this repo's `infra/cf-functions/marketplace-redirect.js` so the redirect logic is co-located with the catalog it serves. Confirm.
+3. **Claude Code 301-following behavior.** Does Claude Code's `/plugin marketplace add` / catalog-fetch HTTP client follow 301 transparently, *and* update its internal cached marketplace URL on a 301? If it follows but doesn't update, every session keeps hitting the redirect indefinitely until the 410 phase forces cleanup. Worth a quick test in a sandbox session before Day 0. (Action: test against any 301-redirected URL Claude Code is known to consume; document the observed behavior in the cutover runbook.)
+4. **`marketplace.8th-layer.ai` vs `marketplace.onezero1.ai` for the new hostname.** The brand is 8th-Layer.ai but the apex domain in production is `onezero1.ai` (and the existing URL is `8thlayer.onezero1.ai`). Recommendation: use `marketplace.8th-layer.ai` to match brand and signal the post-rebrand future; defer the `8th-layer.ai` apex setup as a sibling task. Confirm — alternative is `marketplace.onezero1.ai`, consistent with the existing apex but off-brand.
+5. **Old bucket `marketplace.json` retention.** After Day 90, when the old URL returns 410, do we delete the old bucket's `marketplace.json` object entirely, or leave it (versioning preserves it anyway)? Recommendation: delete it. The 410 layer is on CloudFront/the apex distro's function, not the bucket; deleting the object removes a stale source-of-truth from the marketing-website's bucket and prevents confusion if someone later inspects the bucket directly.
+
