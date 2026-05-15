@@ -18,7 +18,7 @@
         "ref": "main"
       },
       "description": "8th-Layer.ai agent — fork of Mozilla.AI's cq plugin with enterprise execution capabilities (AIGRP client-side routing, DID-KMS bridge, multi-tenancy hooks). Speaks the cq protocol natively; pair with an 8th-Layer.ai tenant Remote for the enterprise feature set.",
-      "version": "0.8.0+8l-dev",
+      "version": "0.10.0+8l-dev",
       "author": {
         "name": "OneZero1.ai",
         "email": "support@onezero1.ai"
